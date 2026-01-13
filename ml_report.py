@@ -26,8 +26,11 @@ def load_patrocinados(patrocinados_file) -> pd.DataFrame:
     pat = pd.read_excel(patrocinados_file, sheet_name="Relatório Anúncios patrocinados", header=1)
     pat["ID"] = pat["Código do anúncio"].astype(str).str.replace("MLB", "", regex=False)
 
-    for c in ["Impressões","Cliques","Receita\n(Moeda local)","Investimento\n(Moeda local)",
-              "Vendas por publicidade\n(Diretas + Indiretas)"]:
+    for c in ["Impressões","Cliques","Receita
+(Moeda local)","Investimento
+(Moeda local)",
+              "Vendas por publicidade
+(Diretas + Indiretas)"]:
         if c in pat.columns:
             pat[c] = pd.to_numeric(pat[c], errors="coerce")
 
@@ -37,42 +40,39 @@ def load_patrocinados(patrocinados_file) -> pd.DataFrame:
 # =========================
 # CAMPANHAS: DIÁRIO vs CONSOLIDADO
 # =========================
+def _coerce_campaign_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    cols_num = [
+        "Impressões","Cliques","Receita
+(Moeda local)","Investimento
+(Moeda local)",
+        "Vendas por publicidade
+(Diretas + Indiretas)","ROAS
+(Receitas / Investimento)",
+        "CVR
+(Conversion rate)","% de impressões perdidas por orçamento",
+        "% de impressões perdidas por classificação","Orçamento","ACOS Objetivo"
+    ]
+    for c in cols_num:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
 def load_campanhas_diario(campanhas_file) -> pd.DataFrame:
     camp = pd.read_excel(campanhas_file, sheet_name="Relatório de campanha", header=1)
     camp["Desde"] = pd.to_datetime(camp["Desde"], errors="coerce")
-
-    cols_num = [
-        "Impressões","Cliques","Receita\n(Moeda local)","Investimento\n(Moeda local)",
-        "Vendas por publicidade\n(Diretas + Indiretas)","ROAS\n(Receitas / Investimento)",
-        "CVR\n(Conversion rate)","% de impressões perdidas por orçamento",
-        "% de impressões perdidas por classificação"
-    ]
-    for c in cols_num:
-        camp[c] = pd.to_numeric(camp[c], errors="coerce")
-
+    camp = _coerce_campaign_numeric(camp)
     return camp
 
 
 def load_campanhas_consolidado(campanhas_file) -> pd.DataFrame:
-    # O consolidado também vem na aba "Relatório de campanha"
     camp = pd.read_excel(campanhas_file, sheet_name="Relatório de campanha", header=1)
-
-    # Converte numéricos que interessam
-    cols_num = [
-        "Impressões","Cliques","Receita\n(Moeda local)","Investimento\n(Moeda local)",
-        "Vendas por publicidade\n(Diretas + Indiretas)","ROAS\n(Receitas / Investimento)",
-        "CVR\n(Conversion rate)","% de impressões perdidas por orçamento",
-        "% de impressões perdidas por classificação","Orçamento","ACOS Objetivo"
-    ]
-    for c in cols_num:
-        if c in camp.columns:
-            camp[c] = pd.to_numeric(camp[c], errors="coerce")
-
+    # No consolidado normalmente não tem a coluna "Desde"
+    camp = _coerce_campaign_numeric(camp)
     return camp
 
 
 def build_daily_from_diario(camp_diario: pd.DataFrame) -> pd.DataFrame:
-    # Para gráfico de tendência (somente no modo diário)
     daily = camp_diario.groupby("Desde", as_index=False).agg(
         Investimento=("Investimento\n(Moeda local)", "sum"),
         Receita=("Receita\n(Moeda local)", "sum"),
@@ -84,12 +84,8 @@ def build_daily_from_diario(camp_diario: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_campaign_agg(camp: pd.DataFrame, modo: str) -> pd.DataFrame:
-    """
-    Retorna uma tabela por campanha com métricas do período.
-    - modo='diario': agrega as linhas diárias (sum/mean)
-    - modo='consolidado': já vem 1 linha por campanha (usa direto)
-    """
     if modo == "diario":
+        # agrega várias linhas (1 por dia) em 1 linha por campanha
         camp_agg = camp.groupby("Nome", as_index=False).agg(
             Status=("Status", "last"),
             Orçamento=("Orçamento", "last"),
@@ -108,7 +104,7 @@ def build_campaign_agg(camp: pd.DataFrame, modo: str) -> pd.DataFrame:
         )
         return camp_agg
 
-    # CONSOLIDADO
+    # CONSOLIDADO: já vem 1 linha por campanha
     camp_agg = camp.rename(columns={
         "Receita\n(Moeda local)": "Receita",
         "Investimento\n(Moeda local)": "Investimento",
@@ -119,8 +115,11 @@ def build_campaign_agg(camp: pd.DataFrame, modo: str) -> pd.DataFrame:
         "% de impressões perdidas por classificação": "Perdidas_Class",
     }).copy()
 
-    # Garante colunas mínimas
-    needed = ["Nome","Status","Orçamento","ACOS Objetivo","Impressões","Cliques","Receita","Investimento","Vendas","ROAS","CVR","Perdidas_Orc","Perdidas_Class"]
+    needed = [
+        "Nome","Status","Orçamento","ACOS Objetivo",
+        "Impressões","Cliques","Receita","Investimento","Vendas",
+        "ROAS","CVR","Perdidas_Orc","Perdidas_Class"
+    ]
     for col in needed:
         if col not in camp_agg.columns:
             camp_agg[col] = pd.NA
