@@ -1,6 +1,8 @@
 import streamlit as st
-from datetime import datetime
-import ml_report as ml
+import ml_report
+
+st.write(ml_report.ping())
+
 
 st.set_page_config(page_title="ML Ads – Dashboard & Relatório", layout="wide")
 st.title("Mercado Livre Ads – Dashboard e Relatório Automático")
