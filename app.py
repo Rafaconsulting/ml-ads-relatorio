@@ -1,18 +1,26 @@
 import streamlit as st
 from datetime import datetime
-import pandas as pd
 
 from ml_report import (
-    load_organico, load_campanhas, load_patrocinados,
-    build_tables, build_daily, gerar_excel
+    load_organico, load_patrocinados,
+    load_campanhas_diario, load_campanhas_consolidado,
+    build_campaign_agg, build_daily_from_diario,
+    build_tables, gerar_excel
 )
 
 st.set_page_config(page_title="ML Ads – Dashboard & Relatório", layout="wide")
 st.title("Mercado Livre Ads – Dashboard e Relatório Automático")
 
-st.write("1) Envie os 3 relatórios (XLSX) | 2) Veja o Dashboard | 3) Gere o Excel final")
+# ===== Toggle de modo =====
+modo = st.radio(
+    "Selecione o tipo de relatório de campanhas que você exportou:",
+    ["CONSOLIDADO (decisão)", "DIÁRIO (monitoramento)"],
+    horizontal=True
+)
 
-# ----- Regras ajustáveis (na tela) -----
+modo_key = "consolidado" if "CONSOLIDADO" in modo else "diario"
+
+# ----- Regras ajustáveis -----
 with st.expander("⚙️ Regras (ajustáveis)"):
     c1, c2, c3, c4 = st.columns(4)
 
@@ -30,7 +38,7 @@ u1, u2, u3 = st.columns(3)
 with u1:
     organico_file = st.file_uploader("Relatório orgânico (publicações)", type=["xlsx"])
 with u2:
-    campanhas_file = st.file_uploader("Relatório campanhas Ads (diário)", type=["xlsx"])
+    campanhas_file = st.file_uploader("Relatório campanhas Ads", type=["xlsx"])
 with u3:
     patrocinados_file = st.file_uploader("Relatório anúncios patrocinados", type=["xlsx"])
 
@@ -41,26 +49,30 @@ if not (organico_file and campanhas_file and patrocinados_file):
 # ----- Carregar dados -----
 with st.spinner("Lendo arquivos..."):
     org = load_organico(organico_file)
-    camp = load_campanhas(campanhas_file)
     pat = load_patrocinados(patrocinados_file)
 
-# ----- Construir tabelas -----
-kpis, camp_agg, pause, enter, scale, acos = build_tables(
-    org, camp, pat,
-    enter_visitas_min=int(enter_visitas_min),
-    enter_conv_min=float(enter_conv_pct)/100.0,
-    pause_invest_min=float(pause_invest_min),
-    pause_cvr_max=float(pause_cvr_pct)/100.0,
-)
-daily = build_daily(camp)
+    if modo_key == "diario":
+        camp = load_campanhas_diario(campanhas_file)
+    else:
+        camp = load_campanhas_consolidado(campanhas_file)
 
+# ----- Base por campanha -----
+camp_agg = build_campaign_agg(camp, modo_key)
+
+# ----- Tabelas decisão + KPIs -----
+kpis, pause, enter, scale, acos = build_tables(
+    org, camp_agg, pat,
+    enter_visitas_min=int(enter_visitas_min),
+    enter_conv_min=float(enter_conv_pct) / 100.0,
+    pause_invest_min=float(pause_invest_min),
+    pause_cvr_max=float(pause_cvr_pct) / 100.0,
+)
+
+# ----- Tabs -----
 tab1, tab2 = st.tabs(["📊 Dashboard", "📄 Gerar Relatório (Excel)"])
 
-# =========================
-# DASHBOARD
-# =========================
 with tab1:
-    st.subheader("KPIs (15 dias)")
+    st.subheader("KPIs")
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("Investimento", f"R$ {kpis['Investimento Ads (R$)']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
     k2.metric("Receita Ads", f"R$ {kpis['Receita Ads (R$)']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
@@ -71,15 +83,16 @@ with tab1:
 
     st.divider()
 
-    st.subheader("Evolução diária (Investimento x Receita x Vendas)")
-    chart_df = daily.copy()
-    chart_df = chart_df.set_index("Desde")
-    st.line_chart(chart_df[["Investimento", "Receita", "Vendas"]])
+    if modo_key == "diario":
+        st.subheader("Evolução diária (somente modo DIÁRIO)")
+        daily = build_daily_from_diario(camp).set_index("Desde")
+        st.line_chart(daily[["Investimento", "Receita", "Vendas"]])
+        st.divider()
+    else:
+        st.caption("Modo CONSOLIDADO: não há gráfico diário porque o export não tem dados por dia.")
+        st.divider()
 
-    st.divider()
-
-    st.subheader("Campanhas – visão rápida")
-    st.caption("Dispersão: ROAS x CVR | tamanho ~ investimento (quanto maior, mais gastou)")
+    st.subheader("Campanhas – ROAS x CVR (visão rápida)")
     scatter = camp_agg.copy()
     scatter["CVR_%"] = scatter["CVR"] * 100
     st.scatter_chart(scatter, x="ROAS", y="CVR_%", size="Investimento")
@@ -102,12 +115,9 @@ with tab1:
         st.subheader("Anúncios orgânicos para ENTRAR em Ads")
         st.dataframe(enter, use_container_width=True)
 
-# =========================
-# GERAR EXCEL
-# =========================
 with tab2:
     st.subheader("Gerar Excel final com decisões")
-    st.write("Esse Excel vai sair com as abas: RESUMO, PAUSAR CAMPANHAS, ENTRAR EM ADS, ESCALAR ORÇAMENTO, AJUSTAR ACOS, BASE CAMPANHAS (AGG).")
+    st.write("Abas: RESUMO | PAUSAR CAMPANHAS | ENTRAR EM ADS | ESCALAR ORÇAMENTO | AJUSTAR ACOS | BASE CAMPANHAS (AGG)")
 
     if st.button("Gerar e baixar Excel"):
         with st.spinner("Gerando Excel..."):
