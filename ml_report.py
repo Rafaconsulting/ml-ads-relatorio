@@ -1,5 +1,4 @@
 import streamlit as st
-from ml_report import gerar_relatorio
 from datetime import datetime
 
 st.set_page_config(page_title="Relatório ML Ads", layout="wide")
