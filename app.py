@@ -92,11 +92,10 @@ with tab1:
         st.caption("Modo CONSOLIDADO: não há gráfico diário porque o export não tem dados por dia.")
         st.divider()
 
-    # ===== NOVO: Gráfico de barras =====
+    # ===== Gráfico de barras =====
     st.subheader("Campanhas – gráfico de barras (Top 10 por Receita)")
 
     bar = camp_agg.copy()
-    # garante numéricos
     for col in ["Receita", "Investimento", "Vendas", "ROAS", "CVR"]:
         if col in bar.columns:
             bar[col] = bar[col].astype(float)
