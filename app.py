@@ -1,12 +1,6 @@
 import streamlit as st
 from datetime import datetime
-
-from ml_report import (
-    load_organico, load_patrocinados,
-    load_campanhas_diario, load_campanhas_consolidado,
-    build_campaign_agg, build_daily_from_diario,
-    build_tables, gerar_excel
-)
+import ml_report as ml
 
 st.set_page_config(page_title="ML Ads – Dashboard & Relatório", layout="wide")
 st.title("Mercado Livre Ads – Dashboard e Relatório Automático")
@@ -47,19 +41,19 @@ if not (organico_file and campanhas_file and patrocinados_file):
 
 # ----- Carregar dados -----
 with st.spinner("Lendo arquivos..."):
-    org = load_organico(organico_file)
-    pat = load_patrocinados(patrocinados_file)
+    org = ml.load_organico(organico_file)
+    pat = ml.load_patrocinados(patrocinados_file)
 
     if modo_key == "diario":
-        camp = load_campanhas_diario(campanhas_file)
+        camp = ml.load_campanhas_diario(campanhas_file)
     else:
-        camp = load_campanhas_consolidado(campanhas_file)
+        camp = ml.load_campanhas_consolidado(campanhas_file)
 
 # ----- Base por campanha -----
-camp_agg = build_campaign_agg(camp, modo_key)
+camp_agg = ml.build_campaign_agg(camp, modo_key)
 
 # ----- Tabelas decisão + KPIs -----
-kpis, pause, enter, scale, acos = build_tables(
+kpis, pause, enter, scale, acos = ml.build_tables(
     org, camp_agg, pat,
     enter_visitas_min=int(enter_visitas_min),
     enter_conv_min=float(enter_conv_pct) / 100.0,
@@ -85,7 +79,7 @@ with tab1:
     # ===== Linha diária apenas no modo diário =====
     if modo_key == "diario":
         st.subheader("Evolução diária (somente modo DIÁRIO)")
-        daily = build_daily_from_diario(camp).set_index("Desde")
+        daily = ml.build_daily_from_diario(camp).set_index("Desde")
         st.line_chart(daily[["Investimento", "Receita", "Vendas"]])
         st.divider()
     else:
@@ -112,13 +106,11 @@ with tab1:
     st.subheader(f"Campanhas – Top 10 por {metrica_top10}")
 
     bar = camp_agg.copy()
-    # garante numéricos
     for col in ["Receita", "Investimento", "Vendas", "ROAS", "CVR"]:
         if col in bar.columns:
             bar[col] = bar[col].astype(float)
 
     bar = bar.sort_values(metrica_top10, ascending=asc).head(10).set_index("Nome")
-
     st.bar_chart(bar[[metrica_top10]])
     st.caption(f"Top 10 campanhas ordenadas por {metrica_top10}.")
     st.divider()
@@ -146,7 +138,7 @@ with tab2:
 
     if st.button("Gerar e baixar Excel"):
         with st.spinner("Gerando Excel..."):
-            bytes_xlsx = gerar_excel(kpis, camp_agg, pause, enter, scale, acos)
+            bytes_xlsx = ml.gerar_excel(kpis, camp_agg, pause, enter, scale, acos)
 
         nome = f"Relatorio_ML_ADs_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx"
         st.download_button(
