@@ -1,6 +1,9 @@
 import pandas as pd
 from io import BytesIO
 
+# =========================
+# LOADERS
+# =========================
 def load_organico(organico_file) -> pd.DataFrame:
     org = pd.read_excel(organico_file, header=4)
     org.columns = [
@@ -19,7 +22,22 @@ def load_organico(organico_file) -> pd.DataFrame:
     return org
 
 
-def load_campanhas(campanhas_file) -> pd.DataFrame:
+def load_patrocinados(patrocinados_file) -> pd.DataFrame:
+    pat = pd.read_excel(patrocinados_file, sheet_name="Relatório Anúncios patrocinados", header=1)
+    pat["ID"] = pat["Código do anúncio"].astype(str).str.replace("MLB", "", regex=False)
+
+    for c in ["Impressões","Cliques","Receita\n(Moeda local)","Investimento\n(Moeda local)",
+              "Vendas por publicidade\n(Diretas + Indiretas)"]:
+        if c in pat.columns:
+            pat[c] = pd.to_numeric(pat[c], errors="coerce")
+
+    return pat
+
+
+# =========================
+# CAMPANHAS: DIÁRIO vs CONSOLIDADO
+# =========================
+def load_campanhas_diario(campanhas_file) -> pd.DataFrame:
     camp = pd.read_excel(campanhas_file, sheet_name="Relatório de campanha", header=1)
     camp["Desde"] = pd.to_datetime(camp["Desde"], errors="coerce")
 
@@ -35,22 +53,88 @@ def load_campanhas(campanhas_file) -> pd.DataFrame:
     return camp
 
 
-def load_patrocinados(patrocinados_file) -> pd.DataFrame:
-    pat = pd.read_excel(patrocinados_file, sheet_name="Relatório Anúncios patrocinados", header=1)
-    pat["ID"] = pat["Código do anúncio"].astype(str).str.replace("MLB", "", regex=False)
+def load_campanhas_consolidado(campanhas_file) -> pd.DataFrame:
+    # O consolidado também vem na aba "Relatório de campanha"
+    camp = pd.read_excel(campanhas_file, sheet_name="Relatório de campanha", header=1)
 
-    # Colunas numéricas (nem sempre usadas no dashboard, mas já deixa pronto)
-    for c in ["Impressões","Cliques","Receita\n(Moeda local)","Investimento\n(Moeda local)",
-              "Vendas por publicidade\n(Diretas + Indiretas)"]:
-        if c in pat.columns:
-            pat[c] = pd.to_numeric(pat[c], errors="coerce")
+    # Converte numéricos que interessam
+    cols_num = [
+        "Impressões","Cliques","Receita\n(Moeda local)","Investimento\n(Moeda local)",
+        "Vendas por publicidade\n(Diretas + Indiretas)","ROAS\n(Receitas / Investimento)",
+        "CVR\n(Conversion rate)","% de impressões perdidas por orçamento",
+        "% de impressões perdidas por classificação","Orçamento","ACOS Objetivo"
+    ]
+    for c in cols_num:
+        if c in camp.columns:
+            camp[c] = pd.to_numeric(camp[c], errors="coerce")
 
-    return pat
+    return camp
 
 
+def build_daily_from_diario(camp_diario: pd.DataFrame) -> pd.DataFrame:
+    # Para gráfico de tendência (somente no modo diário)
+    daily = camp_diario.groupby("Desde", as_index=False).agg(
+        Investimento=("Investimento\n(Moeda local)", "sum"),
+        Receita=("Receita\n(Moeda local)", "sum"),
+        Vendas=("Vendas por publicidade\n(Diretas + Indiretas)", "sum"),
+        Cliques=("Cliques", "sum"),
+        Impressoes=("Impressões", "sum"),
+    )
+    return daily.sort_values("Desde")
+
+
+def build_campaign_agg(camp: pd.DataFrame, modo: str) -> pd.DataFrame:
+    """
+    Retorna uma tabela por campanha com métricas do período.
+    - modo='diario': agrega as linhas diárias (sum/mean)
+    - modo='consolidado': já vem 1 linha por campanha (usa direto)
+    """
+    if modo == "diario":
+        camp_agg = camp.groupby("Nome", as_index=False).agg(
+            Status=("Status", "last"),
+            Orçamento=("Orçamento", "last"),
+            **{
+                "ACOS Objetivo": ("ACOS Objetivo", "last"),
+                "Impressões": ("Impressões", "sum"),
+                "Cliques": ("Cliques", "sum"),
+                "Receita": ("Receita\n(Moeda local)", "sum"),
+                "Investimento": ("Investimento\n(Moeda local)", "sum"),
+                "Vendas": ("Vendas por publicidade\n(Diretas + Indiretas)", "sum"),
+                "ROAS": ("ROAS\n(Receitas / Investimento)", "mean"),
+                "CVR": ("CVR\n(Conversion rate)", "mean"),
+                "Perdidas_Orc": ("% de impressões perdidas por orçamento", "mean"),
+                "Perdidas_Class": ("% de impressões perdidas por classificação", "mean"),
+            }
+        )
+        return camp_agg
+
+    # CONSOLIDADO
+    camp_agg = camp.rename(columns={
+        "Receita\n(Moeda local)": "Receita",
+        "Investimento\n(Moeda local)": "Investimento",
+        "Vendas por publicidade\n(Diretas + Indiretas)": "Vendas",
+        "ROAS\n(Receitas / Investimento)": "ROAS",
+        "CVR\n(Conversion rate)": "CVR",
+        "% de impressões perdidas por orçamento": "Perdidas_Orc",
+        "% de impressões perdidas por classificação": "Perdidas_Class",
+    }).copy()
+
+    # Garante colunas mínimas
+    needed = ["Nome","Status","Orçamento","ACOS Objetivo","Impressões","Cliques","Receita","Investimento","Vendas","ROAS","CVR","Perdidas_Orc","Perdidas_Class"]
+    for col in needed:
+        if col not in camp_agg.columns:
+            camp_agg[col] = pd.NA
+
+    camp_agg = camp_agg[needed].copy()
+    return camp_agg
+
+
+# =========================
+# TABELAS DE DECISÃO + KPIs
+# =========================
 def build_tables(
     org: pd.DataFrame,
-    camp: pd.DataFrame,
+    camp_agg: pd.DataFrame,
     pat: pd.DataFrame,
     enter_visitas_min: int = 50,
     enter_conv_min: float = 0.05,   # regra: > 5%
@@ -62,17 +146,6 @@ def build_tables(
     acos_lost_rank_min: float = 30.0,
     acos_roas_min: float = 7.0
 ):
-    # Agregado por campanha (base)
-    camp_agg = camp.groupby("Nome", as_index=False).agg(
-        Investimento=("Investimento\n(Moeda local)", "sum"),
-        Receita=("Receita\n(Moeda local)", "sum"),
-        Vendas=("Vendas por publicidade\n(Diretas + Indiretas)", "sum"),
-        CVR=("CVR\n(Conversion rate)", "mean"),
-        ROAS=("ROAS\n(Receitas / Investimento)", "mean"),
-        Perdidas_Orc=("% de impressões perdidas por orçamento", "mean"),
-        Perdidas_Class=("% de impressões perdidas por classificação", "mean")
-    )
-
     # Pausar
     pause = camp_agg[
         (camp_agg["Investimento"] > pause_invest_min) &
@@ -110,14 +183,13 @@ def build_tables(
     acos["Ação"] = "AUMENTAR ACOS OBJETIVO"
     acos = acos.sort_values("Perdidas_Class", ascending=False)
 
-    # KPIs
-    invest_total = float(camp["Investimento\n(Moeda local)"].sum())
-    receita_total = float(camp["Receita\n(Moeda local)"].sum())
-    vendas_total = int(camp["Vendas por publicidade\n(Diretas + Indiretas)"].sum())
+    invest_total = float(pd.to_numeric(camp_agg["Investimento"], errors="coerce").fillna(0).sum())
+    receita_total = float(pd.to_numeric(camp_agg["Receita"], errors="coerce").fillna(0).sum())
+    vendas_total = int(pd.to_numeric(camp_agg["Vendas"], errors="coerce").fillna(0).sum())
     roas_total = (receita_total / invest_total) if invest_total else 0.0
 
     kpis = {
-        "Campanhas únicas": int(camp["Nome"].nunique()),
+        "Campanhas únicas": int(camp_agg["Nome"].nunique()),
         "IDs patrocinados únicos": int(pat["ID"].nunique()),
         "Investimento Ads (R$)": invest_total,
         "Receita Ads (R$)": receita_total,
@@ -125,18 +197,7 @@ def build_tables(
         "ROAS": roas_total,
     }
 
-    return kpis, camp_agg, pause, enter, scale, acos
-
-
-def build_daily(camp: pd.DataFrame) -> pd.DataFrame:
-    daily = camp.groupby("Desde", as_index=False).agg(
-        Investimento=("Investimento\n(Moeda local)", "sum"),
-        Receita=("Receita\n(Moeda local)", "sum"),
-        Vendas=("Vendas por publicidade\n(Diretas + Indiretas)", "sum"),
-        Cliques=("Cliques","sum"),
-        Impressoes=("Impressões","sum"),
-    )
-    return daily.sort_values("Desde")
+    return kpis, pause, enter, scale, acos
 
 
 def gerar_excel(kpis, camp_agg, pause, enter, scale, acos) -> bytes:
