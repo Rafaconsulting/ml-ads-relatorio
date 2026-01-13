@@ -92,20 +92,35 @@ with tab1:
         st.caption("Modo CONSOLIDADO: não há gráfico diário porque o export não tem dados por dia.")
         st.divider()
 
+    # ===== Seletores Top 10 =====
+    col_sel1, col_sel2 = st.columns([2, 1])
+    with col_sel1:
+        metrica_top10 = st.selectbox(
+            "Top 10 campanhas por:",
+            ["Receita", "Investimento", "ROAS", "Vendas"],
+            index=0
+        )
+    with col_sel2:
+        ordem = st.selectbox(
+            "Ordem:",
+            ["Maior → Menor", "Menor → Maior"],
+            index=0
+        )
+    asc = ordem == "Menor → Maior"
+
     # ===== Gráfico de barras =====
-    st.subheader("Campanhas – gráfico de barras (Top 10 por Receita)")
+    st.subheader(f"Campanhas – Top 10 por {metrica_top10}")
 
     bar = camp_agg.copy()
+    # garante numéricos
     for col in ["Receita", "Investimento", "Vendas", "ROAS", "CVR"]:
         if col in bar.columns:
             bar[col] = bar[col].astype(float)
 
-    bar = bar.sort_values("Receita", ascending=False).head(10).set_index("Nome")
+    bar = bar.sort_values(metrica_top10, ascending=asc).head(10).set_index("Nome")
 
-    # Barras comparando Receita x Investimento
-    st.bar_chart(bar[["Receita", "Investimento"]])
-
-    st.caption("Top 10 campanhas por Receita no período. Compare Receita vs Investimento para enxergar eficiência e desperdício.")
+    st.bar_chart(bar[[metrica_top10]])
+    st.caption(f"Top 10 campanhas ordenadas por {metrica_top10}.")
     st.divider()
 
     # ===== Tabelas de ação =====
