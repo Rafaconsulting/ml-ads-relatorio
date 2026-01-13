@@ -17,7 +17,6 @@ modo = st.radio(
     ["CONSOLIDADO (decisão)", "DIÁRIO (monitoramento)"],
     horizontal=True
 )
-
 modo_key = "consolidado" if "CONSOLIDADO" in modo else "diario"
 
 # ----- Regras ajustáveis -----
@@ -83,6 +82,7 @@ with tab1:
 
     st.divider()
 
+    # ===== Linha diária apenas no modo diário =====
     if modo_key == "diario":
         st.subheader("Evolução diária (somente modo DIÁRIO)")
         daily = build_daily_from_diario(camp).set_index("Desde")
@@ -92,13 +92,24 @@ with tab1:
         st.caption("Modo CONSOLIDADO: não há gráfico diário porque o export não tem dados por dia.")
         st.divider()
 
-    st.subheader("Campanhas – ROAS x CVR (visão rápida)")
-    scatter = camp_agg.copy()
-    scatter["CVR_%"] = scatter["CVR"] * 100
-    st.scatter_chart(scatter, x="ROAS", y="CVR_%", size="Investimento")
+    # ===== NOVO: Gráfico de barras =====
+    st.subheader("Campanhas – gráfico de barras (Top 10 por Receita)")
 
+    bar = camp_agg.copy()
+    # garante numéricos
+    for col in ["Receita", "Investimento", "Vendas", "ROAS", "CVR"]:
+        if col in bar.columns:
+            bar[col] = bar[col].astype(float)
+
+    bar = bar.sort_values("Receita", ascending=False).head(10).set_index("Nome")
+
+    # Barras comparando Receita x Investimento
+    st.bar_chart(bar[["Receita", "Investimento"]])
+
+    st.caption("Top 10 campanhas por Receita no período. Compare Receita vs Investimento para enxergar eficiência e desperdício.")
     st.divider()
 
+    # ===== Tabelas de ação =====
     cA, cB = st.columns(2)
     with cA:
         st.subheader("Campanhas para ESCALAR orçamento")
