@@ -66,26 +66,83 @@ with tab1:
     st.write(f"ROAS da conta: **{diagnosis['ROAS']:.2f}** | ACOS real: **{diagnosis['ACOS_real']:.2f}**")
     st.write(f"**Veredito:** {diagnosis['Veredito']}")
 
-    if diagnosis["Tendencias"]["cpc_proxy_up"] is not None:
+    t = diagnosis.get("Tendencias", {})
+    if t and (t.get("cpc_proxy_up") is not None):
         st.caption(
             f"Tendencias (ultimos 7d vs 7d anteriores) | "
-            f"CPC proxy: {diagnosis['Tendencias']['cpc_proxy_up']:+.1%} | "
-            f"Ticket: {diagnosis['Tendencias']['ticket_down']:+.1%} | "
-            f"ROAS: {diagnosis['Tendencias']['roas_down']:+.1%}"
+            f"CPC proxy: {t['cpc_proxy_up']:+.1%} | "
+            f"Ticket: {t['ticket_down']:+.1%} | "
+            f"ROAS: {t['roas_down']:+.1%}"
         )
+    st.divider()
+
+    st.subheader("KPIs")
+    a, b, c, d, e, f = st.columns(6)
+    a.metric("Investimento", f"R$ {kpis['Investimento Ads (R$)']:.2f}")
+    b.metric("Receita", f"R$ {kpis['Receita Ads (R$)']:.2f}")
+    c.metric("Vendas", kpis["Vendas Ads"])
+    d.metric("ROAS", f"{kpis['ROAS']:.2f}")
+    e.metric("Campanhas unicas", kpis["Campanhas únicas"])
+    f.metric("IDs patrocinados", kpis["IDs patrocinados únicos"])
 
     st.divider()
-    st.subheader("Painel de Controle Geral")
-    st.dataframe(panel, use_container_width=True)
+
+    if modo_key == "diario":
+        st.subheader("Evolucao diaria")
+        daily2 = daily.set_index("Desde")
+        st.line_chart(daily2[["Investimento", "Receita", "Vendas"]])
+        st.divider()
+
+    st.subheader("Top 10 campanhas por Receita (fixo)")
+    bar = camp_agg.copy()
+    for col in ["Receita", "Investimento", "Vendas", "ROAS", "CVR"]:
+        if col in bar.columns:
+            bar[col] = bar[col].astype(float)
+    bar = bar.sort_values("Receita", ascending=False).head(10).set_index("Nome")
+    st.bar_chart(bar[["Receita"]])
 
     st.divider()
+
+    st.subheader("Matriz de Oportunidade (Destaques)")
+    cA, cB = st.columns(2)
+    with cA:
+        st.write("Locomotivas (CPI 80% + perda por classificacao)")
+        st.dataframe(high["Locomotivas"], use_container_width=True)
+    with cB:
+        st.write("Minas Limitadas (ROAS alto + perda por orcamento)")
+        st.dataframe(high["Minas"], use_container_width=True)
+
+    st.divider()
+
     st.subheader("Plano de Acao - 7 dias")
     st.dataframe(plan7, use_container_width=True)
 
+    st.divider()
+
+    st.subheader("Painel de Controle Geral (todas as campanhas)")
+    st.dataframe(panel, use_container_width=True)
+
+    st.divider()
+
+    cC, cD = st.columns(2)
+    with cC:
+        st.subheader("Campanhas para PAUSAR/REVISAR")
+        st.dataframe(pause, use_container_width=True)
+    with cD:
+        st.subheader("Anuncios para ENTRAR em Ads (organico forte)")
+        st.dataframe(enter, use_container_width=True)
+
 with tab2:
+    st.subheader("Gerar relatorio final (Excel)")
     if st.button("Gerar e baixar Excel"):
-        bytes_xlsx = ml.gerar_excel(
-            kpis, camp_agg, pause, enter, scale, acos, camp_strat, daily=daily
-        )
+        with st.spinner("Gerando Excel..."):
+            bytes_xlsx = ml.gerar_excel(kpis, camp_agg, pause, enter, scale, acos, camp_strat, daily=daily)
+
         nome = f"Relatorio_ML_ADs_Estrategico_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx"
-        st.download_button("Baixar Excel", bytes_xlsx, nome)
+        st.download_button(
+            "Baixar Excel",
+            data=bytes_xlsx,
+            file_name=nome,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        st.success("OK")
