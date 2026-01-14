@@ -1,275 +1,108 @@
-# -*- coding: utf-8 -*-
 import pandas as pd
 from io import BytesIO
-import unicodedata
 
-
-def _norm(s: str) -> str:
-    """Lower + remove accents/diacritics + trim."""
-    if s is None:
-        return ""
-    s = str(s)
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    return s.lower().strip()
-
-
-def _find_sheet(xls: pd.ExcelFile, keywords):
-    """Find a sheet by keywords ignoring accents."""
-    names = xls.sheet_names
-    norm_names = [_norm(n) for n in names]
-    for i, nn in enumerate(norm_names):
-        ok = True
-        for kw in keywords:
-            if _norm(kw) not in nn:
-                ok = False
-                break
-        if ok:
-            return names[i]
-    return None
-
-
-# =========================
-# LOADERS
-# =========================
 def load_organico(organico_file) -> pd.DataFrame:
-    # Usually first sheet
-    df = pd.read_excel(organico_file, header=4)
-    # Standardize columns if possible; otherwise keep and map later
-    # Expect: ID, title, status, visits, sales, etc.
-    cols = list(df.columns)
+    org = pd.read_excel(organico_file, header=4)
+    org.columns = [
+        "ID","Titulo","Status","Variacao","SKU",
+        "Visitas","Qtd_Vendas","Compradores",
+        "Unidades","Vendas_Brutas","Participacao",
+        "Conv_Visitas_Vendas","Conv_Visitas_Compradores"
+    ]
+    org = org[org["ID"] != "ID do anúncio"].copy()
 
-    # Try to rename common Portuguese headers to stable names
-    rename_map = {}
-    for c in cols:
-        cn = _norm(c)
-        if "id" in cn and "anuncio" in cn:
-            rename_map[c] = "ID"
-        elif cn in ("titulo", "título"):
-            rename_map[c] = "Titulo"
-        elif "visitas" in cn and "unica" in cn:
-            rename_map[c] = "Visitas"
-        elif cn == "visitas":
-            rename_map[c] = "Visitas"
-        elif "qtd" in cn and "venda" in cn:
-            rename_map[c] = "Qtd_Vendas"
-        elif "vendas brutas" in cn or ("vendas" in cn and "bruta" in cn):
-            rename_map[c] = "Vendas_Brutas"
-        elif "conversao" in cn and "visitas" in cn and "vendas" in cn:
-            rename_map[c] = "Conv_Visitas_Vendas"
+    for c in ["Visitas","Qtd_Vendas","Compradores","Unidades","Vendas_Brutas",
+              "Participacao","Conv_Visitas_Vendas","Conv_Visitas_Compradores"]:
+        org[c] = pd.to_numeric(org[c], errors="coerce")
 
-    df = df.rename(columns=rename_map)
-
-    # Remove header-like row if present
-    if "ID" in df.columns:
-        df = df[df["ID"].astype(str).str.lower().str.contains("id") == False].copy()
-
-    # Coerce
-    if "ID" in df.columns:
-        df["ID"] = df["ID"].astype(str).str.replace("MLB", "", regex=False)
-
-    for c in ["Visitas", "Qtd_Vendas", "Vendas_Brutas", "Conv_Visitas_Vendas"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    # Keep safe columns
-    keep = []
-    for c in ["ID", "Titulo", "Visitas", "Qtd_Vendas", "Vendas_Brutas", "Conv_Visitas_Vendas"]:
-        if c in df.columns:
-            keep.append(c)
-    if not keep:
-        # fallback: return raw
-        return df
-    return df[keep].copy()
-
+    org["ID"] = org["ID"].astype(str).str.replace("MLB", "", regex=False)
+    return org
 
 def load_patrocinados(patrocinados_file) -> pd.DataFrame:
-    xls = pd.ExcelFile(patrocinados_file)
-    # Find sheet by keywords (no accents)
-    sheet = _find_sheet(xls, ["anuncios", "patrocinados"])
-    if sheet is None:
-        sheet = xls.sheet_names[0]
+    pat = pd.read_excel(patrocinados_file, sheet_name="Relatório Anúncios patrocinados", header=1)
+    pat["ID"] = pat["Código do anúncio"].astype(str).str.replace("MLB", "", regex=False)
 
-    df = pd.read_excel(patrocinados_file, sheet_name=sheet, header=1)
+    for c in ["Impressões","Cliques","Receita\n(Moeda local)","Investimento\n(Moeda local)",
+              "Vendas por publicidade\n(Diretas + Indiretas)"]:
+        if c in pat.columns:
+            pat[c] = pd.to_numeric(pat[c], errors="coerce")
 
-    # Find ad code column
-    code_col = None
-    for c in df.columns:
-        if "codigo" in _norm(c) and "anuncio" in _norm(c):
-            code_col = c
-            break
-
-    if code_col is not None:
-        df["ID"] = df[code_col].astype(str).str.replace("MLB", "", regex=False)
-    else:
-        # fallback
-        df["ID"] = pd.NA
-
-    # Coerce common numerics (if present)
-    num_cols = [
-        "Impressoes", "Cliques", "Receita", "Investimento", "Vendas"
-    ]
-    # Map by fuzzy match
-    for c in list(df.columns):
-        cn = _norm(c)
-        if "impresso" in cn:
-            df["Impressoes"] = pd.to_numeric(df[c], errors="coerce")
-        elif cn == "cliques":
-            df["Cliques"] = pd.to_numeric(df[c], errors="coerce")
-        elif "receita" in cn:
-            df["Receita"] = pd.to_numeric(df[c], errors="coerce")
-        elif "investimento" in cn:
-            df["Investimento"] = pd.to_numeric(df[c], errors="coerce")
-        elif "vendas" in cn and "public" in cn:
-            df["Vendas"] = pd.to_numeric(df[c], errors="coerce")
-
-    # Keep minimum
-    keep = ["ID"]
-    for c in ["Impressoes", "Cliques", "Receita", "Investimento", "Vendas"]:
-        if c in df.columns:
-            keep.append(c)
-    return df[keep].copy()
-
+    return pat
 
 def _coerce_campaign_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    for c in df.columns:
-        cn = _norm(c)
-        if any(k in cn for k in ["impresso", "clique", "receita", "investimento", "vendas", "roas", "cvr", "perdidas", "orcamento", "acos"]):
-            df[c] = pd.to_numeric(df[c], errors="ignore")
+    cols_num = [
+        "Impressões","Cliques","Receita\n(Moeda local)","Investimento\n(Moeda local)",
+        "Vendas por publicidade\n(Diretas + Indiretas)","ROAS\n(Receitas / Investimento)",
+        "CVR\n(Conversion rate)","% de impressões perdidas por orçamento",
+        "% de impressões perdidas por classificação","Orçamento","ACOS Objetivo"
+    ]
+    for c in cols_num:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
-
 
 def load_campanhas_diario(campanhas_file) -> pd.DataFrame:
-    xls = pd.ExcelFile(campanhas_file)
-    sheet = _find_sheet(xls, ["campanha"])
-    if sheet is None:
-        sheet = xls.sheet_names[0]
-    df = pd.read_excel(campanhas_file, sheet_name=sheet, header=1)
-
-    # date col
-    if "Desde" in df.columns:
-        df["Desde"] = pd.to_datetime(df["Desde"], errors="coerce")
-    else:
-        # try find date column
-        for c in df.columns:
-            if "desde" in _norm(c):
-                df["Desde"] = pd.to_datetime(df[c], errors="coerce")
-                break
-
-    df = _coerce_campaign_numeric(df)
-    return df
-
+    camp = pd.read_excel(campanhas_file, sheet_name="Relatório de campanha", header=1)
+    camp["Desde"] = pd.to_datetime(camp["Desde"], errors="coerce")
+    camp = _coerce_campaign_numeric(camp)
+    return camp
 
 def load_campanhas_consolidado(campanhas_file) -> pd.DataFrame:
-    xls = pd.ExcelFile(campanhas_file)
-    sheet = _find_sheet(xls, ["campanha"])
-    if sheet is None:
-        sheet = xls.sheet_names[0]
-    df = pd.read_excel(campanhas_file, sheet_name=sheet, header=1)
-    df = _coerce_campaign_numeric(df)
-    return df
-
+    camp = pd.read_excel(campanhas_file, sheet_name="Relatório de campanha", header=1)
+    camp = _coerce_campaign_numeric(camp)
+    return camp
 
 def build_daily_from_diario(camp_diario: pd.DataFrame) -> pd.DataFrame:
-    # Try to locate column names by fuzzy match
-    def col_like(keywords):
-        for c in camp_diario.columns:
-            cn = _norm(c)
-            ok = True
-            for kw in keywords:
-                if _norm(kw) not in cn:
-                    ok = False
-                    break
-            if ok:
-                return c
-        return None
-
-    col_inv = col_like(["investimento"])
-    col_rec = col_like(["receita"])
-    col_vend = col_like(["vendas"])
-    col_cli = col_like(["cliques"])
-    col_imp = col_like(["impresso"])
-
     daily = camp_diario.groupby("Desde", as_index=False).agg(
-        Investimento=(col_inv, "sum") if col_inv else ("Desde", "size"),
-        Receita=(col_rec, "sum") if col_rec else ("Desde", "size"),
-        Vendas=(col_vend, "sum") if col_vend else ("Desde", "size"),
-        Cliques=(col_cli, "sum") if col_cli else ("Desde", "size"),
-        Impressoes=(col_imp, "sum") if col_imp else ("Desde", "size"),
+        Investimento=("Investimento\n(Moeda local)", "sum"),
+        Receita=("Receita\n(Moeda local)", "sum"),
+        Vendas=("Vendas por publicidade\n(Diretas + Indiretas)", "sum"),
+        Cliques=("Cliques", "sum"),
+        Impressoes=("Impressões", "sum"),
     )
     return daily.sort_values("Desde")
 
-
 def build_campaign_agg(camp: pd.DataFrame, modo: str) -> pd.DataFrame:
-    # Fuzzy column getter
-    def col_like(keywords):
-        for c in camp.columns:
-            cn = _norm(c)
-            ok = True
-            for kw in keywords:
-                if _norm(kw) not in cn:
-                    ok = False
-                    break
-            if ok:
-                return c
-        return None
-
-    col_nome = col_like(["nome"]) or "Nome"
-    col_status = col_like(["status"])
-    col_orc = col_like(["orcamento"]) or col_like(["orçamento"])
-    col_acos = col_like(["acos", "objetivo"])
-    col_imp = col_like(["impresso"])
-    col_cli = col_like(["cliques"])
-    col_rec = col_like(["receita"])
-    col_inv = col_like(["investimento"])
-    col_vend = col_like(["vendas", "public"])
-    col_roas = col_like(["roas"])
-    col_cvr = col_like(["cvr"])
-    col_lost_b = col_like(["perdidas", "orcamento"]) or col_like(["perdidas", "orçamento"])
-    col_lost_r = col_like(["perdidas", "classificacao"]) or col_like(["perdidas", "classificação"])
-
     if modo == "diario":
-        g = camp.groupby(col_nome, as_index=False).agg(
-            Nome=(col_nome, "first"),
-            Status=(col_status, "last") if col_status else (col_nome, "first"),
-            Orcamento=(col_orc, "last") if col_orc else (col_nome, "first"),
-            Acos_Objetivo=(col_acos, "last") if col_acos else (col_nome, "first"),
-            Impressoes=(col_imp, "sum") if col_imp else (col_nome, "size"),
-            Cliques=(col_cli, "sum") if col_cli else (col_nome, "size"),
-            Receita=(col_rec, "sum") if col_rec else (col_nome, "size"),
-            Investimento=(col_inv, "sum") if col_inv else (col_nome, "size"),
-            Vendas=(col_vend, "sum") if col_vend else (col_nome, "size"),
-            ROAS=(col_roas, "mean") if col_roas else (col_nome, "size"),
-            CVR=(col_cvr, "mean") if col_cvr else (col_nome, "size"),
-            Perdidas_Orc=(col_lost_b, "mean") if col_lost_b else (col_nome, "size"),
-            Perdidas_Class=(col_lost_r, "mean") if col_lost_r else (col_nome, "size"),
+        camp_agg = camp.groupby("Nome", as_index=False).agg(
+            Status=("Status", "last"),
+            Orçamento=("Orçamento", "last"),
+            **{
+                "ACOS Objetivo": ("ACOS Objetivo", "last"),
+                "Impressões": ("Impressões", "sum"),
+                "Cliques": ("Cliques", "sum"),
+                "Receita": ("Receita\n(Moeda local)", "sum"),
+                "Investimento": ("Investimento\n(Moeda local)", "sum"),
+                "Vendas": ("Vendas por publicidade\n(Diretas + Indiretas)", "sum"),
+                "ROAS": ("ROAS\n(Receitas / Investimento)", "mean"),
+                "CVR": ("CVR\n(Conversion rate)", "mean"),
+                "Perdidas_Orc": ("% de impressões perdidas por orçamento", "mean"),
+                "Perdidas_Class": ("% de impressões perdidas por classificação", "mean"),
+            }
         )
-        return g[[
-            "Nome","Status","Orcamento","Acos_Objetivo","Impressoes","Cliques",
-            "Receita","Investimento","Vendas","ROAS","CVR","Perdidas_Orc","Perdidas_Class"
-        ]].copy()
+        return camp_agg
 
-    # Consolidado: assume 1 linha por campanha
-    df = pd.DataFrame()
-    df["Nome"] = camp[col_nome].astype(str)
-    df["Status"] = camp[col_status] if col_status else pd.NA
-    df["Orcamento"] = camp[col_orc] if col_orc else pd.NA
-    df["Acos_Objetivo"] = camp[col_acos] if col_acos else pd.NA
-    df["Impressoes"] = camp[col_imp] if col_imp else pd.NA
-    df["Cliques"] = camp[col_cli] if col_cli else pd.NA
-    df["Receita"] = camp[col_rec] if col_rec else pd.NA
-    df["Investimento"] = camp[col_inv] if col_inv else pd.NA
-    df["Vendas"] = camp[col_vend] if col_vend else pd.NA
-    df["ROAS"] = camp[col_roas] if col_roas else pd.NA
-    df["CVR"] = camp[col_cvr] if col_cvr else pd.NA
-    df["Perdidas_Orc"] = camp[col_lost_b] if col_lost_b else pd.NA
-    df["Perdidas_Class"] = camp[col_lost_r] if col_lost_r else pd.NA
+    camp_agg = camp.rename(columns={
+        "Receita\n(Moeda local)": "Receita",
+        "Investimento\n(Moeda local)": "Investimento",
+        "Vendas por publicidade\n(Diretas + Indiretas)": "Vendas",
+        "ROAS\n(Receitas / Investimento)": "ROAS",
+        "CVR\n(Conversion rate)": "CVR",
+        "% de impressões perdidas por orçamento": "Perdidas_Orc",
+        "% de impressões perdidas por classificação": "Perdidas_Class",
+    }).copy()
 
-    for c in ["Impressoes","Cliques","Receita","Investimento","Vendas","ROAS","CVR","Perdidas_Orc","Perdidas_Class","Orcamento","Acos_Objetivo"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+    needed = [
+        "Nome","Status","Orçamento","ACOS Objetivo",
+        "Impressões","Cliques","Receita","Investimento","Vendas",
+        "ROAS","CVR","Perdidas_Orc","Perdidas_Class"
+    ]
+    for col in needed:
+        if col not in camp_agg.columns:
+            camp_agg[col] = pd.NA
 
-    return df
-
+    camp_agg = camp_agg[needed].copy()
+    return camp_agg
 
 def build_tables(
     org: pd.DataFrame,
@@ -285,52 +118,37 @@ def build_tables(
     acos_lost_rank_min: float = 30.0,
     acos_roas_min: float = 7.0
 ):
-    # Normalize numeric
-    for c in ["Investimento","Receita","Vendas","ROAS","CVR","Perdidas_Orc","Perdidas_Class"]:
-        if c in camp_agg.columns:
-            camp_agg[c] = pd.to_numeric(camp_agg[c], errors="coerce")
-
-    # Pause
     pause = camp_agg[
         (camp_agg["Investimento"] > pause_invest_min) &
         ((camp_agg["Vendas"] <= 0) | (camp_agg["CVR"] < pause_cvr_max))
     ].copy()
-    pause["Acao"] = "PAUSAR"
+    pause["Ação"] = "PAUSAR"
     pause = pause.sort_values("Investimento", ascending=False)
 
-    # Enter ads
-    ads_ids = set(pat["ID"].dropna().astype(str).unique()) if "ID" in pat.columns else set()
-    if "ID" in org.columns:
-        org_ids = org["ID"].astype(str)
-    else:
-        org_ids = pd.Series([], dtype=str)
+    ads_ids = set(pat["ID"].dropna().astype(str).unique())
+    enter = org[
+        (org["Visitas"] >= enter_visitas_min) &
+        (org["Conv_Visitas_Vendas"] > enter_conv_min) &
+        (~org["ID"].astype(str).isin(ads_ids))
+    ].copy()
+    enter["Codigo_MLB"] = "MLB" + enter["ID"].astype(str)
+    enter["Ação"] = "INSERIR EM ADS"
+    enter = enter.sort_values(["Conv_Visitas_Vendas","Visitas"], ascending=[False, False])
+    enter = enter[["ID","Codigo_MLB","Titulo","Conv_Visitas_Vendas","Visitas","Qtd_Vendas","Vendas_Brutas","Ação"]]
 
-    enter = org.copy()
-    if "Visitas" in enter.columns:
-        enter = enter[enter["Visitas"] >= enter_visitas_min]
-    if "Conv_Visitas_Vendas" in enter.columns:
-        enter = enter[enter["Conv_Visitas_Vendas"] > enter_conv_min]
-    if "ID" in enter.columns:
-        enter = enter[~enter["ID"].astype(str).isin(ads_ids)]
-
-    if "ID" in enter.columns:
-        enter["Codigo_MLB"] = "MLB" + enter["ID"].astype(str)
-
-    # Scale budget
     scale = camp_agg[
         (camp_agg["Perdidas_Orc"] > scale_lost_budget_min) &
         (camp_agg["CVR"] >= scale_cvr_min) &
         (camp_agg["ROAS"] >= scale_roas_min)
     ].copy()
-    scale["Acao"] = "AUMENTAR_ORCAMENTO"
+    scale["Ação"] = "AUMENTAR ORÇAMENTO"
     scale = scale.sort_values("Perdidas_Orc", ascending=False)
 
-    # Increase acos
     acos = camp_agg[
         (camp_agg["Perdidas_Class"] > acos_lost_rank_min) &
         (camp_agg["ROAS"] >= acos_roas_min)
     ].copy()
-    acos["Acao"] = "AUMENTAR_ACOS"
+    acos["Ação"] = "AUMENTAR ACOS OBJETIVO"
     acos = acos.sort_values("Perdidas_Class", ascending=False)
 
     invest_total = float(pd.to_numeric(camp_agg["Investimento"], errors="coerce").fillna(0).sum())
@@ -339,26 +157,25 @@ def build_tables(
     roas_total = (receita_total / invest_total) if invest_total else 0.0
 
     kpis = {
-        "campaigns_unique": int(camp_agg["Nome"].nunique()) if "Nome" in camp_agg.columns else 0,
-        "sponsored_ids_unique": int(pat["ID"].nunique()) if "ID" in pat.columns else 0,
-        "investment": invest_total,
-        "revenue": receita_total,
-        "sales": vendas_total,
-        "roas": roas_total,
+        "Campanhas únicas": int(camp_agg["Nome"].nunique()),
+        "IDs patrocinados únicos": int(pat["ID"].nunique()),
+        "Investimento Ads (R$)": invest_total,
+        "Receita Ads (R$)": receita_total,
+        "Vendas Ads": vendas_total,
+        "ROAS": roas_total,
     }
 
     return kpis, pause, enter, scale, acos
-
 
 def gerar_excel(kpis, camp_agg, pause, enter, scale, acos) -> bytes:
     resumo = pd.DataFrame([kpis])
     out = BytesIO()
     with pd.ExcelWriter(out, engine="openpyxl") as writer:
         resumo.to_excel(writer, index=False, sheet_name="RESUMO")
-        pause.to_excel(writer, index=False, sheet_name="PAUSAR_CAMPANHAS")
-        enter.to_excel(writer, index=False, sheet_name="ENTRAR_EM_ADS")
-        scale.to_excel(writer, index=False, sheet_name="ESCALAR_ORCAMENTO")
-        acos.to_excel(writer, index=False, sheet_name="AJUSTAR_ACOS")
-        camp_agg.to_excel(writer, index=False, sheet_name="BASE_CAMPANHAS")
+        pause.to_excel(writer, index=False, sheet_name="PAUSAR CAMPANHAS")
+        enter.to_excel(writer, index=False, sheet_name="ENTRAR EM ADS")
+        scale.to_excel(writer, index=False, sheet_name="ESCALAR ORCAMENTO")
+        acos.to_excel(writer, index=False, sheet_name="AJUSTAR ACOS")
+        camp_agg.to_excel(writer, index=False, sheet_name="BASE CAMPANHAS (AGG)")
     out.seek(0)
     return out.read()
